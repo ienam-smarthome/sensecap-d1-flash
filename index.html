@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SenseCAP D1 Hubitat Dashboard — Flash from your browser</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+    line-height: 1.55;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .sub { opacity: 0.7; margin-top: 0; }
+  .install-card {
+    border: 1px solid rgba(127,127,127,0.35);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1.75rem 0;
+    text-align: center;
+  }
+  esp-web-install-button {
+    --esp-tools-button-color: #2563eb;
+  }
+  h2 { font-size: 1.05rem; margin-top: 2.25rem; }
+  ol, ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  code {
+    background: rgba(127,127,127,0.15);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .note {
+    border-left: 3px solid #2563eb;
+    padding: 0.1rem 1rem;
+    margin: 1rem 0;
+    opacity: 0.9;
+  }
+  .warn {
+    border-left: 3px solid #d97706;
+    padding: 0.1rem 1rem;
+    margin: 1rem 0;
+    opacity: 0.9;
+  }
+  footer { margin-top: 3rem; font-size: 0.85rem; opacity: 0.6; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+
+<h1>SenseCAP D1 Hubitat Dashboard</h1>
+<p class="sub">Flash the firmware directly from your browser — no software to install.</p>
+
+<div class="install-card">
+  <esp-web-install-button manifest="manifest.json">
+    <button slot="activate">Connect device &amp; install</button>
+    <span slot="unsupported">
+      Your browser can't do this. Please open this page in <strong>Chrome</strong> or <strong>Microsoft Edge</strong> on a
+      desktop or laptop computer.
+    </span>
+    <span slot="not-allowed">
+      This page needs to be served over <strong>HTTPS</strong> (or opened from <code>localhost</code>) for the browser
+      to allow a USB connection.
+    </span>
+  </esp-web-install-button>
+</div>
+
+<h2>Before you start</h2>
+<ul>
+  <li>Use <strong>Chrome</strong> or <strong>Edge</strong> on Windows, macOS, Linux, or ChromeOS — this uses the Web
+    Serial API, which Safari and Firefox don't support, and it does not work on phones or tablets.</li>
+  <li>Connect the SenseCAP D1 to your computer with a USB cable that supports <strong>data</strong>, not just
+    charging.</li>
+  <li>Close any other program that might be using the device's serial port (Arduino IDE, a terminal, another browser
+    tab already connected to it, etc.).</li>
+  <li>If your operating system doesn't already have a driver for the board's USB-to-serial chip (commonly a CP210x or
+    CH34x/CH9102 family chip depending on the exact unit), install the matching driver first, then reconnect the
+    cable.</li>
+</ul>
+
+<h2>How to flash</h2>
+<ol>
+  <li>Click <strong>Connect device &amp; install</strong> above.</li>
+  <li>Your browser will show a list of serial/COM ports — pick the one for the D1 and click <strong>Connect</strong>.</li>
+  <li>Click <strong>Install</strong> in the dialog that appears, then confirm. This writes the bootloader, partition
+    table, and application — it takes about 30–60 seconds.</li>
+  <li>When it finishes, click <strong>Next</strong>/<strong>Close</strong>. The D1 will reboot on its own.</li>
+</ol>
+
+<div class="note">
+  <strong>Your Wi-Fi and Hubitat setup are preserved.</strong> This installer only writes the bootloader, partition
+  table, and application — it does not touch the NVS storage area where your Wi-Fi credentials and Hubitat runtime
+  config live. If you're updating an already-configured D1, it will reconnect on its own with no re-setup needed.
+</div>
+
+<h2>First-time setup (new / factory D1)</h2>
+<p>
+  If this is a brand-new device with nothing configured yet, after flashing it will boot into its own Wi-Fi setup
+  access point. Connect to that from your phone or computer, give it your home Wi-Fi details, then install the
+  <strong>SenseCap D1 Config</strong> app on your Hubitat hub and enter the D1's local IP address there to start
+  pushing your dashboard to it.
+</p>
+
+<h2>Having trouble?</h2>
+<ul>
+  <li><strong>No ports show up / "Connect device" does nothing noticeable</strong> — try a different USB cable or
+    port, and make sure no other program has the port open.</li>
+  <li><strong>Install fails partway through</strong> — reconnect the cable, refresh this page, and try again. Holding
+    the board's reset button briefly before clicking Connect can also help on some units.</li>
+  <li><strong>It flashed, but nothing shows on screen</strong> — give it a minute; the first boot after a flash can
+    take a little longer while it reads its saved configuration.</li>
+</ul>
+
+<footer>
+  Built with <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>.
+  Source and full firmware project: see the repository this page ships alongside.
+</footer>
+
+</body>
+</html>
