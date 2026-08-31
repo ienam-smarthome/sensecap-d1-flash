@@ -11,10 +11,38 @@ definition(
 
 preferences {
     page(name: "mainPage", title: "SenseCap D1 Config", install: true, uninstall: true) {
+        if (settings?.d1InstanceLabel) {
+            app.updateLabel(settings.d1InstanceLabel as String)
+        }
+        // Auto-suggest the D1's timezone from the hub's own "Time Zone" setting (Hub
+        // Details page) the first time this app is configured, so most users never have
+        // to look up a POSIX TZ string manually. Only fires while d1Timezone is still
+        // blank - once a value exists (auto-filled or hand-entered), it's left alone,
+        // so this never overwrites a deliberate choice.
+        // getInstallationState() != "COMPLETE" guards the very first render of a
+        // brand-new app instance: app.updateSetting() needs a row in Hubitat's
+        // app_setting table keyed by installed_app_id, which doesn't exist yet at that
+        // point (the app record itself isn't created until the first Done/Save), so
+        // calling it earlier throws a NULL-constraint SQL error. The try/catch is a
+        // second layer of defense in case that state check itself isn't reliable on
+        // every Hubitat platform version - matches the same defensive pattern already
+        // used for createAccessToken() below.
+        if (!settings?.d1Timezone && app.getInstallationState() == "COMPLETE") {
+            try {
+                String suggested = suggestedPosixTzFromHub()
+                if (suggested) {
+                    app.updateSetting("d1Timezone", [type: "text", value: suggested])
+                }
+            } catch (ignored) {}
+        }
+        section("App Name") {
+            input "d1InstanceLabel", "text", title: "Name for this D1 (shown in your Apps list)", required: false, submitOnChange: true, description: "e.g. 'Living Room D1' or 'Bedroom D1' - helps tell multiple D1 instances apart when running more than one screen. Leave blank to use the default name."
+        }
         section("D1 Device") {
             input "d1DeviceIp", "text", title: "D1 local IP address", required: false, description: "Example: 192.168.1.123"
             input "d1DevicePort", "number", title: "D1 local config port", required: false, defaultValue: 8080
             input "d1FullSyncIntervalMinutes", "number", title: "Periodic full sync interval (minutes)", required: false, defaultValue: 15, range: "5..59", description: "Safety-net resync in case a live event is ever missed. Lower = catches drift faster but pushes the full device list to the D1 more often; higher = less traffic but slower to self-correct."
+            input "d1Timezone", "text", title: "Timezone (POSIX TZ string, including DST rule)", required: false, submitOnChange: true, description: "Controls the D1's on-screen clock. Must include the DST transition rule, not just a UTC offset, or the clock will be an hour off for half the year. Auto-filled from your hub's Time Zone setting (Hub Details page) when recognized - edit it if it's wrong or your zone wasn't recognized. Look up your zone's POSIX TZ string online otherwise - for example 'EST5EDT,M3.2.0,M11.1.0' for US Eastern, or 'CET-1CEST,M3.5.0,M10.5.0/3' for most of continental Europe."
             input name: "syncD1Now", type: "button", title: "Send settings to D1 now"
             paragraph "Enter the D1 IP address above. The app will send settings directly to http://D1-IP:8080/d1/config, so you no longer need to paste D1_REMOTE_CONFIG_URL into app_config.h for screensaver control."
         }
@@ -67,8 +95,90 @@ mappings {
     path("/command") { action: [POST: "command"] }
 }
 
-def installed() { initialize(); pushSettingsToD1(false) }
-def updated() { unsubscribe(); initialize(); pushSettingsToD1(false) }
+def installed() { updateAppLabelFromSettings(); applySuggestedTimezoneIfBlank(); initialize(); pushSettingsToD1(false) }
+def updated() { updateAppLabelFromSettings(); unsubscribe(); initialize(); pushSettingsToD1(false) }
+
+private void applySuggestedTimezoneIfBlank() {
+    // installed() runs right after the very first Done/Save completes, by which point
+    // the app instance genuinely exists (unlike the mainPage-closure attempt, which is
+    // gated on getInstallationState() == "COMPLETE" and so skips this on that very
+    // first render) - calling it here too means the timezone is auto-filled
+    // immediately on first install rather than requiring the user to reopen the page a
+    // second time before the suggestion appears.
+    if (settings?.d1Timezone) return
+    try {
+        String suggested = suggestedPosixTzFromHub()
+        if (suggested) {
+            app.updateSetting("d1Timezone", [type: "text", value: suggested])
+        }
+    } catch (ignored) {}
+}
+
+private void updateAppLabelFromSettings() {
+    // Mirrors the live update already done inline in the mainPage closure above (which
+    // only fires while the page is actually open) - this covers the install/save
+    // transitions too, so a label typed in before the very first "Done" still sticks.
+    if (settings?.d1InstanceLabel) {
+        app.updateLabel(settings.d1InstanceLabel as String)
+    }
+}
+
+private String suggestedPosixTzFromHub() {
+    // Hub Details exposes a Time Zone setting backed by a standard IANA/Olson zone ID
+    // (location.timeZone.getID(), e.g. "Europe/London") - but the D1 firmware needs a
+    // POSIX TZ string with an explicit DST transition rule baked in (e.g.
+    // "GMT0BST,M3.5.0/1,M10.5.0/2"), and there's no reliable way to derive one
+    // generically from a Java TimeZone object: DST transition dates/times vary by
+    // region, some zones don't observe DST at all, and getting this wrong silently
+    // means a clock that's an hour off for half the year - worse than just asking the
+    // user to enter it. A curated table of common zones is more reliable than
+    // algorithmic derivation, at the cost of not covering every zone Hubitat supports;
+    // anything not listed here falls through to manual entry (see the field's
+    // description).
+    String zoneId = null
+    try { zoneId = location?.timeZone?.getID() } catch (ignored) {}
+    if (!zoneId) return null
+
+    Map<String, String> known = [
+        "Europe/London"      : "GMT0BST,M3.5.0/1,M10.5.0/2",
+        "Europe/Berlin"      : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Paris"       : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Madrid"      : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Rome"        : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Amsterdam"   : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Brussels"    : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Vienna"      : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Warsaw"      : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Stockholm"   : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Copenhagen"  : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Zurich"      : "CET-1CEST,M3.5.0,M10.5.0/3",
+        "Europe/Lisbon"      : "WET0WEST,M3.5.0/1,M10.5.0/2",
+        "Europe/Athens"      : "EET-2EEST,M3.5.0/3,M10.5.0/4",
+        "Europe/Helsinki"    : "EET-2EEST,M3.5.0/3,M10.5.0/4",
+        "Europe/Bucharest"   : "EET-2EEST,M3.5.0/3,M10.5.0/4",
+        "America/New_York"   : "EST5EDT,M3.2.0,M11.1.0",
+        "America/Chicago"    : "CST6CDT,M3.2.0,M11.1.0",
+        "America/Denver"     : "MST7MDT,M3.2.0,M11.1.0",
+        "America/Los_Angeles": "PST8PDT,M3.2.0,M11.1.0",
+        "America/Anchorage"  : "AKST9AKDT,M3.2.0,M11.1.0",
+        "America/Phoenix"    : "MST7",
+        "America/Toronto"    : "EST5EDT,M3.2.0,M11.1.0",
+        "America/Vancouver"  : "PST8PDT,M3.2.0,M11.1.0",
+        "Australia/Sydney"   : "AEST-10AEDT,M10.1.0,M4.1.0/3",
+        "Australia/Melbourne": "AEST-10AEDT,M10.1.0,M4.1.0/3",
+        "Australia/Brisbane" : "AEST-10",
+        "Australia/Perth"    : "AWST-8",
+        "Australia/Adelaide" : "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
+        "Pacific/Auckland"   : "NZST-12NZDT,M9.5.0,M4.1.0/3",
+        "Asia/Tokyo"         : "JST-9",
+        "Asia/Shanghai"      : "CST-8",
+        "Asia/Singapore"     : "SGT-8",
+        "Asia/Kolkata"       : "IST-5:30",
+        "Asia/Dubai"         : "GST-4",
+        "UTC"                : "UTC0",
+    ]
+    return known[zoneId]
+}
 def initialize() {
     try {
         if (!state.accessToken) createAccessToken()
@@ -573,6 +683,7 @@ private Map configMap(Boolean startNow = false) {
         wifi: [ssid: val(settings.wifiSsid), password: val(settings.wifiPassword)],
         hubitat: [commandUrl: commandUrl, configUrl: configUrl],
         devices: d1DeviceSnapshotList(),
+        timezone: (settings.d1Timezone ?: "GMT0BST,M3.5.0/1,M10.5.0/2"),
         weather: [
             deviceId: settings.weatherDevice ? settings.weatherDevice.id.toString() : "",
             deviceLabel: settings.weatherDevice ? settings.weatherDevice.displayName : "",
