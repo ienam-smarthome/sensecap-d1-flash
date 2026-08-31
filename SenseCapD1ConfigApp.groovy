@@ -11,12 +11,6 @@ definition(
 
 preferences {
     page(name: "mainPage", title: "SenseCap D1 Config", install: true, uninstall: true) {
-        if (settings?.d1InstanceLabel) {
-            app.updateLabel(settings.d1InstanceLabel as String)
-        }
-        section("App Name") {
-            input "d1InstanceLabel", "text", title: "Name for this D1 (shown in your Apps list)", required: false, submitOnChange: true, description: "e.g. 'Living Room D1' or 'Bedroom D1' - helps tell multiple D1 instances apart when running more than one screen. Leave blank to use the default name."
-        }
         section("D1 Device") {
             input "d1DeviceIp", "text", title: "D1 local IP address", required: false, description: "Example: 192.168.1.123"
             input "d1DevicePort", "number", title: "D1 local config port", required: false, defaultValue: 8080
@@ -73,17 +67,8 @@ mappings {
     path("/command") { action: [POST: "command"] }
 }
 
-def installed() { updateAppLabelFromSettings(); initialize(); pushSettingsToD1(false) }
-def updated() { updateAppLabelFromSettings(); unsubscribe(); initialize(); pushSettingsToD1(false) }
-
-private void updateAppLabelFromSettings() {
-    // Mirrors the live update already done inline in the mainPage closure above (which
-    // only fires while the page is actually open) - this covers the install/save
-    // transitions too, so a label typed in before the very first "Done" still sticks.
-    if (settings?.d1InstanceLabel) {
-        app.updateLabel(settings.d1InstanceLabel as String)
-    }
-}
+def installed() { initialize(); pushSettingsToD1(false) }
+def updated() { unsubscribe(); initialize(); pushSettingsToD1(false) }
 def initialize() {
     try {
         if (!state.accessToken) createAccessToken()
