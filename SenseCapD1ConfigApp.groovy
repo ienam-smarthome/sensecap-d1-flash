@@ -35,6 +35,21 @@ preferences {
                 }
             } catch (ignored) {}
         }
+        // Same idea for date order: US date format (MM/DD/YYYY) is genuinely a US-only
+        // convention, not a general "America/*" one - Canada, Mexico, Brazil, and the
+        // rest of the Americas use day/month order same as most of the world, so this
+        // checks a curated set of actual US zone IDs (the same ones already in
+        // suggestedPosixTzFromHub()'s table) rather than a broad prefix match. Only
+        // fires while the setting is still unset (Groovy's == true test below makes
+        // "unset" and "explicitly off" indistinguishable, so this uses containsKey
+        // instead to only ever set it once, on a genuinely blank value).
+        if (!settings?.containsKey("d1DateFormatUS") && app.getInstallationState() == "COMPLETE") {
+            try {
+                if (isUSTimezoneFromHub()) {
+                    app.updateSetting("d1DateFormatUS", [type: "bool", value: true])
+                }
+            } catch (ignored) {}
+        }
         section("App Name") {
             input "d1InstanceLabel", "text", title: "Name for this D1 (shown in your Apps list)", required: false, submitOnChange: true, description: "e.g. 'Living Room D1' or 'Bedroom D1' - helps tell multiple D1 instances apart when running more than one screen. Leave blank to use the default name."
         }
@@ -42,7 +57,15 @@ preferences {
             input "d1DeviceIp", "text", title: "D1 local IP address", required: false, description: "Example: 192.168.1.123"
             input "d1DevicePort", "number", title: "D1 local config port", required: false, defaultValue: 8080
             input "d1FullSyncIntervalMinutes", "number", title: "Periodic full sync interval (minutes)", required: false, defaultValue: 15, range: "5..59", description: "Safety-net resync in case a live event is ever missed. Lower = catches drift faster but pushes the full device list to the D1 more often; higher = less traffic but slower to self-correct."
-            input "d1Timezone", "text", title: "Timezone (POSIX TZ string, including DST rule)", required: false, submitOnChange: true, description: "Controls the D1's on-screen clock. Must include the DST transition rule, not just a UTC offset, or the clock will be an hour off for half the year. Auto-filled from your hub's Time Zone setting (Hub Details page) when recognized - edit it if it's wrong or your zone wasn't recognized. Look up your zone's POSIX TZ string online otherwise - for example 'EST5EDT,M3.2.0,M11.1.0' for US Eastern, or 'CET-1CEST,M3.5.0,M10.5.0/3' for most of continental Europe."
+            input "d1Timezone", "text", title: "Timezone (POSIX TZ string, including DST rule)", required: false, submitOnChange: true, description: "Controls the D1's on-screen clock. Must include the DST transition rule, not just a UTC offset, or the clock will be an hour off for half the year. Auto-filled from your hub's Time Zone setting (Hub Details page) when recognized - edit it if it's wrong or your zone wasn't recognized."
+            if (!settings?.d1Timezone) {
+                String hubZoneId = null
+                try { hubZoneId = location?.timeZone?.getID() } catch (ignored) {}
+                paragraph "Your hub's timezone (${hubZoneId ?: 'unknown'}) isn't in this app's auto-detect list, so the Timezone field above is blank - the D1 will show UK time until you fill it in. Look up your zone's POSIX TZ string at " +
+                          "https://www.veron.nl/wp-content/uploads/2022/12/Posix-Timezone-Strings.pdf (a comprehensive reference list), paste it into the field above, and click \"Send settings to D1 now\". " +
+                          "Common examples: US Eastern is 'EST5EDT,M3.2.0,M11.1.0', most of continental Europe is 'CET-1CEST,M3.5.0,M10.5.0/3', Australian Eastern is 'AEST-10AEDT,M10.1.0,M4.1.0/3'."
+            }
+            input "d1DateFormatUS", "bool", title: "Use US date format (MM/DD/YYYY)", required: false, defaultValue: false, description: "Off (default) shows the screensaver date as day/month/year, e.g. 'Saturday, 22/08/2026'. On shows month/day/year, e.g. 'Saturday, 08/22/2026'. Auto-enabled for US hub timezones on first install - toggle it yourself any time."
             input name: "syncD1Now", type: "button", title: "Send settings to D1 now"
             paragraph "Enter the D1 IP address above. The app will send settings directly to http://D1-IP:8080/d1/config, so you no longer need to paste D1_REMOTE_CONFIG_URL into app_config.h for screensaver control."
         }
@@ -95,7 +118,7 @@ mappings {
     path("/command") { action: [POST: "command"] }
 }
 
-def installed() { updateAppLabelFromSettings(); applySuggestedTimezoneIfBlank(); initialize(); pushSettingsToD1(false) }
+def installed() { updateAppLabelFromSettings(); applySuggestedTimezoneIfBlank(); applySuggestedDateFormatIfUnset(); initialize(); pushSettingsToD1(false) }
 def updated() { updateAppLabelFromSettings(); unsubscribe(); initialize(); pushSettingsToD1(false) }
 
 private void applySuggestedTimezoneIfBlank() {
@@ -114,6 +137,19 @@ private void applySuggestedTimezoneIfBlank() {
     } catch (ignored) {}
 }
 
+private void applySuggestedDateFormatIfUnset() {
+    // Mirrors applySuggestedTimezoneIfBlank() above, for the same "fill in on first
+    // install rather than requiring a second page visit" reason. containsKey (not a
+    // truthiness check) is deliberate: an explicit "off" and "never set" both read as
+    // falsy otherwise, and only the latter should trigger a suggestion.
+    if (settings?.containsKey("d1DateFormatUS")) return
+    try {
+        if (isUSTimezoneFromHub()) {
+            app.updateSetting("d1DateFormatUS", [type: "bool", value: true])
+        }
+    } catch (ignored) {}
+}
+
 private void updateAppLabelFromSettings() {
     // Mirrors the live update already done inline in the mainPage closure above (which
     // only fires while the page is actually open) - this covers the install/save
@@ -121,6 +157,22 @@ private void updateAppLabelFromSettings() {
     if (settings?.d1InstanceLabel) {
         app.updateLabel(settings.d1InstanceLabel as String)
     }
+}
+
+private Boolean isUSTimezoneFromHub() {
+    // US date order (MM/DD/YYYY) is a genuinely US-only convention - Canada, Mexico,
+    // and the rest of the Americas use day/month order like most of the world, so this
+    // checks a curated set of actual US zone IDs rather than a broad "America/*"
+    // prefix match, which would wrongly catch America/Toronto, America/Mexico_City,
+    // America/Sao_Paulo, etc.
+    String zoneId = null
+    try { zoneId = location?.timeZone?.getID() } catch (ignored) {}
+    if (!zoneId) return false
+    List<String> usZones = [
+        "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+        "America/Anchorage", "America/Phoenix", "Pacific/Honolulu",
+    ]
+    return usZones.contains(zoneId)
 }
 
 private String suggestedPosixTzFromHub() {
@@ -162,6 +214,7 @@ private String suggestedPosixTzFromHub() {
         "America/Los_Angeles": "PST8PDT,M3.2.0,M11.1.0",
         "America/Anchorage"  : "AKST9AKDT,M3.2.0,M11.1.0",
         "America/Phoenix"    : "MST7",
+        "Pacific/Honolulu"   : "HST10",
         "America/Toronto"    : "EST5EDT,M3.2.0,M11.1.0",
         "America/Vancouver"  : "PST8PDT,M3.2.0,M11.1.0",
         "Australia/Sydney"   : "AEST-10AEDT,M10.1.0,M4.1.0/3",
@@ -684,6 +737,7 @@ private Map configMap(Boolean startNow = false) {
         hubitat: [commandUrl: commandUrl, configUrl: configUrl],
         devices: d1DeviceSnapshotList(),
         timezone: (settings.d1Timezone ?: "GMT0BST,M3.5.0/1,M10.5.0/2"),
+        dateFormatUS: (settings.d1DateFormatUS == true),
         weather: [
             deviceId: settings.weatherDevice ? settings.weatherDevice.id.toString() : "",
             deviceLabel: settings.weatherDevice ? settings.weatherDevice.displayName : "",
