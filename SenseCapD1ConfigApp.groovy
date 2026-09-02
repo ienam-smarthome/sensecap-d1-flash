@@ -522,21 +522,36 @@ private List d1DeviceSnapshotList() {
 }
 
 private String d1CommandUrl() {
+    // No custom throw here - a thrown exception from createAccessToken() failing was
+    // very likely what tripped a "Cannot get property 'body' on null object" error on
+    // Save, probably from Hubitat's own internal error handling choking on an
+    // exception it didn't expect from this context, not anything in this code
+    // directly. Simple flag checks only, nothing ever thrown from this function.
     try {
         if (!state.accessToken) createAccessToken()
-        return "${getFullLocalApiServerUrl()}/command?access_token=${state.accessToken}"
-    } catch (ignored) {
+    } catch (ignored) {}
+    if (!state.accessToken) {
+        // createAccessToken() fails if OAuth isn't enabled for this app in Hubitat's
+        // Apps Code editor (a separate one-time toggle, not part of this app's own
+        // settings page - easy to miss). Previously this was silently swallowed with
+        // no logging anywhere: the D1 would just get an empty command URL forever,
+        // taps would visually register on screen but never actually reach Hubitat,
+        // and nothing in Hubitat's own logs would explain why. Log it loudly instead.
+        log.warn "SenseCap D1: no access token available. Touch commands from the D1 will not work until you enable OAuth for this app: Apps Code -> SenseCap D1 Config -> gear icon -> OAuth -> Enable OAuth in Apps -> Update, then re-save this app's settings."
         return ""
     }
+    return "${getFullLocalApiServerUrl()}/command?access_token=${state.accessToken}"
 }
 
 private String d1ConfigUrl() {
     try {
         if (!state.accessToken) createAccessToken()
-        return "${getFullLocalApiServerUrl()}/config?access_token=${state.accessToken}"
-    } catch (ignored) {
+    } catch (ignored) {}
+    if (!state.accessToken) {
+        log.warn "SenseCap D1: no access token available. Enable OAuth for this app: Apps Code -> SenseCap D1 Config -> gear icon -> OAuth -> Enable OAuth in Apps -> Update, then re-save this app's settings."
         return ""
     }
+    return "${getFullLocalApiServerUrl()}/config?access_token=${state.accessToken}"
 }
 
 private void subscribeLiveUpdateDevices() {
